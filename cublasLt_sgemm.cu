@@ -308,7 +308,7 @@ void calculate( int const &m, int const &n, int const &k ) {
 int main( int argc, char **argv ) {
 
     int dev {};
-    CUDA_RT_CALL( cudaGetDevice ( &dev ) );
+    CUDA_RT_CALL( cudaGetDevice( &dev ) );
 
     // Compute square matrices
     for ( int i = 16; i <= maxN; i *= 2 )

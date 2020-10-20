@@ -116,7 +116,7 @@ auto constexpr cudaDataTypeO = CUDA_R_16F;
 typedef half dataTypeO;
 auto constexpr cudaDataTypeS = CUDA_R_16F;
 typedef half dataTypeS;
-auto constexpr cudaDataTypeC = CUDA_R_16F;
+auto constexpr cudaDataTypeC   = CUDA_R_16F;
 auto constexpr cudaComputeType = CUBLAS_COMPUTE_16F;
 
 #elif SCENARIO == 1  // CUDA_R_16F, CUDA_R_16F, CUDA_R_16F, CUDA_R_32F, CUDA_R_32F
@@ -126,7 +126,7 @@ auto constexpr cudaDataTypeO = CUDA_R_16F;
 typedef half dataTypeO;
 auto constexpr cudaDataTypeS = CUDA_R_32F;
 typedef float dataTypeS;
-auto constexpr cudaDataTypeC = CUDA_R_32F;
+auto constexpr cudaDataTypeC   = CUDA_R_32F;
 auto constexpr cudaComputeType = CUBLAS_COMPUTE_32F;
 
 #elif SCENARIO == 2  // CUDA_R_16F, CUDA_R_16F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F
@@ -136,7 +136,7 @@ auto constexpr cudaDataTypeO = CUDA_R_32F;
 typedef float dataTypeO;
 auto constexpr cudaDataTypeS = CUDA_R_32F;
 typedef float dataTypeS;
-auto constexpr cudaDataTypeC = CUDA_R_32F;
+auto constexpr cudaDataTypeC   = CUDA_R_32F;
 auto constexpr cudaComputeType = CUBLAS_COMPUTE_32F;
 
 #elif SCENARIO == 3  // CUDA_R_32F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F
@@ -146,7 +146,7 @@ auto constexpr cudaDataTypeO = CUDA_R_32F;
 typedef float dataTypeO;
 auto constexpr cudaDataTypeS = CUDA_R_32F;
 typedef float dataTypeS;
-auto constexpr cudaDataTypeC = CUDA_R_32F;
+auto constexpr cudaDataTypeC   = CUDA_R_32F;
 auto constexpr cudaComputeType = CUBLAS_COMPUTE_32F;
 
 #elif SCENARIO == 4  // CUDA_C_32F, CUDA_C_32F, CUDA_C_32F, CUDA_C_32F, CUDA_C_32F
@@ -156,7 +156,7 @@ auto constexpr cudaDataTypeO = CUDA_C_32F;
 typedef thrust::complex<float> dataTypeO;
 auto constexpr cudaDataTypeS = CUDA_C_32F;
 typedef thrust::complex<float> dataTypeS;
-auto constexpr cudaDataTypeC = CUDA_C_32F;
+auto constexpr cudaDataTypeC   = CUDA_C_32F;
 auto constexpr cudaComputeType = CUBLAS_COMPUTE_32F;
 
 #endif
@@ -385,10 +385,10 @@ void LtGemmSearch( cublasLtHandle_t  ltHandle,
     customMatmulPerf_t perfResults[algoCombinations];
 
     cudaDataType_t computeType = cudaDataTypeC;
-    cudaDataType_t scaleType = cudaDataTypeS;
-    cudaDataType_t Atype = cudaDataTypeI;
-    cudaDataType_t Btype = cudaDataTypeI;
-    cudaDataType_t Ctype = cudaDataTypeO;
+    cudaDataType_t scaleType   = cudaDataTypeS;
+    cudaDataType_t Atype       = cudaDataTypeI;
+    cudaDataType_t Btype       = cudaDataTypeI;
+    cudaDataType_t Ctype       = cudaDataTypeO;
 
     CUDA_RT_CALL( cublasLtMatmulPreferenceCreate( &preference ) );
     CUDA_RT_CALL( cublasLtMatmulPreferenceSetAttribute(
@@ -423,8 +423,8 @@ void LtGemmSearch( cublasLtHandle_t  ltHandle,
         cublasLtMatmulAlgo_t algo;
         size_t               sizeWritten = 0;
         /* Initialize algo structure with given Algp ID */
-        status =
-            cublasLtMatmulAlgoInit( ltHandle, cudaComputeType, scaleType, Atype, Btype, Ctype, Ctype, algoIdA[idx], &algo );
+        status = cublasLtMatmulAlgoInit(
+            ltHandle, cudaComputeType, scaleType, Atype, Btype, Ctype, Ctype, algoIdA[idx], &algo );
         if ( status != CUBLAS_STATUS_SUCCESS ) {
             continue;
         }
@@ -612,7 +612,16 @@ void calculate( int const &m, int const &n, int const &k, int &count, int const 
     thrust::transform( idx, idx + sizeB, d_B.begin( ), GenRand( ) );
 #endif
 
-    printf( "%d %d %d %d %d %d %d %d %d ", count, square, m, n, k, cudaDataTypeI, cudaDataTypeI, cudaDataTypeO, cudaDataTypeC );
+    printf( "%d %d %d %d %d %d %d %d %d ",
+            count,
+            square,
+            m,
+            n,
+            k,
+            cudaDataTypeI,
+            cudaDataTypeI,
+            cudaDataTypeO,
+            cudaDataTypeC );
     count++;
 
     LtGemmSearch( handle,
@@ -700,7 +709,7 @@ void calculate( int const &m, int const &n, int const &k, int &count, int const 
 int main( int argc, char **argv ) {
 
     int dev {};
-    CUDA_RT_CALL( cudaGetDevice ( &dev ) );
+    CUDA_RT_CALL( cudaGetDevice( &dev ) );
 
     printf( "Run Type M N K A_Type B_Type C_Type Compute_Type Algo_ID Tile_Idx Tile_Size Split_K Reduce Swizzle Custom "
             "Status Time(ms) Workspace Math_Mode Waves GFLOPS\n" );

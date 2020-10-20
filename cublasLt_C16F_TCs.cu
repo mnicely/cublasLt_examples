@@ -115,7 +115,7 @@ typedef half2 dataTypeI;
 auto constexpr cudaDataTypeO = CUDA_C_16F;
 typedef half2                  dataTypeO;
 typedef thrust::complex<float> dataTypeS;
-auto constexpr cudaDataTypeC = CUDA_C_32F;
+auto constexpr cudaDataTypeC   = CUDA_C_32F;
 auto constexpr cudaComputeType = CUBLAS_COMPUTE_32F;
 
 #elif SCENARIO == 1  // CUDA_C_16F, CUDA_C_16F, CUDA_C_32F, CUDA_C_32F, CUDA_C_32F
@@ -124,7 +124,7 @@ typedef half2 dataTypeI;
 auto constexpr cudaDataTypeO = CUDA_C_32F;
 typedef thrust::complex<float> dataTypeO;
 typedef thrust::complex<float> dataTypeS;
-auto constexpr cudaDataTypeC = CUDA_C_32F;
+auto constexpr cudaDataTypeC   = CUDA_C_32F;
 auto constexpr cudaComputeType = CUBLAS_COMPUTE_32F;
 #endif
 
@@ -493,7 +493,7 @@ void calculate( int const &m, int const &n, int const &k, int &count, int const 
 int main( int argc, char **argv ) {
 
     int dev {};
-    CUDA_RT_CALL( cudaGetDevice ( &dev ) );
+    CUDA_RT_CALL( cudaGetDevice( &dev ) );
 
     // Ensure GPU found is compute capability 7.0 or greater
     cudaDeviceProp deviceProp;

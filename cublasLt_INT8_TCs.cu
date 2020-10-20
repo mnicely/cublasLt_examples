@@ -79,9 +79,9 @@ typedef int8_t  dataTypeI;
 typedef int32_t dataTypeO;
 typedef int32_t dataTypeS;
 
-auto constexpr maxN      = 1024;
-auto constexpr cudaDataTypeI = CUDA_R_8I;
-auto constexpr cudaDataTypeO = CUDA_R_32I;
+auto constexpr maxN            = 1024;
+auto constexpr cudaDataTypeI   = CUDA_R_8I;
+auto constexpr cudaDataTypeO   = CUDA_R_32I;
 auto constexpr cudaComputeType = CUBLAS_COMPUTE_32F;
 
 int roundoff( int v, int d ) {
@@ -336,7 +336,7 @@ void calculate( int const &m, int const &n, int const &k ) {
 int main( int argc, char **argv ) {
 
     int dev {};
-    CUDA_RT_CALL( cudaGetDevice ( &dev ) );
+    CUDA_RT_CALL( cudaGetDevice( &dev ) );
 
     // Ensure GPU found is compute capability 7.2 or greater
     cudaDeviceProp deviceProp;
