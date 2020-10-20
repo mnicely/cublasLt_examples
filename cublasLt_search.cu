@@ -68,11 +68,29 @@
 /* Includes, cuda & thrust */
 #include <cublasLt.h>
 #include <cuda_runtime.h>
-#include <helper_cuda.h>
 #include <thrust/complex.h>
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 #include <thrust/random.h>
+
+// *************** FOR ERROR CHECKING *******************
+#ifndef CUDA_RT_CALL
+#define CUDA_RT_CALL( call )                                                                                           \
+    {                                                                                                                  \
+        auto status = static_cast<cudaError_t>( call );                                                                \
+        if ( status != cudaSuccess )                                                                                   \
+            fprintf( stderr,                                                                                           \
+                     "ERROR: CUDA RT call \"%s\" in line %d of file %s failed "                                        \
+                     "with "                                                                                           \
+                     "%s (%d).\n",                                                                                     \
+                     #call,                                                                                            \
+                     __LINE__,                                                                                         \
+                     __FILE__,                                                                                         \
+                     cudaGetErrorString( status ),                                                                     \
+                     status );                                                                                         \
+    }
+#endif  // CUDA_RT_CALL
+// *************** FOR ERROR CHECKING *******************
 
 #define PRINT 0
 #define IDENTITY 0
@@ -84,51 +102,62 @@ auto constexpr printAlgos       = 1;
 auto constexpr kernelRepeats    = 10;
 auto constexpr threadsPerBlock  = 1024;
 
+// Key
+// *I = Input
+// *O = Output
+// *s = Scale
+// *C = Compute
+
 // Set data types
-#if SCENARIO == 0 // CUDA_R_16F, CUDA_R_16F, CUDA_R_16F, CUDA_R_16F, CUDA_R_16F
-auto constexpr cudaTypeI = CUDA_R_16F;
+#if SCENARIO == 0  // CUDA_R_16F, CUDA_R_16F, CUDA_R_16F, CUDA_R_16F, CUDA_R_16F
+auto constexpr cudaDataTypeI = CUDA_R_16F;
 typedef half dataTypeI;
-auto constexpr cudaTypeO = CUDA_R_16F;
+auto constexpr cudaDataTypeO = CUDA_R_16F;
 typedef half dataTypeO;
-auto constexpr cudaTypeS = CUDA_R_16F;
+auto constexpr cudaDataTypeS = CUDA_R_16F;
 typedef half dataTypeS;
-auto constexpr cudaTypeCom = CUDA_R_16F;
+auto constexpr cudaDataTypeC = CUDA_R_16F;
+auto constexpr cudaComputeType = CUBLAS_COMPUTE_16F;
 
-#elif SCENARIO == 1 // CUDA_R_16F, CUDA_R_16F, CUDA_R_16F, CUDA_R_32F, CUDA_R_32F
-auto constexpr cudaTypeI = CUDA_R_16F;
+#elif SCENARIO == 1  // CUDA_R_16F, CUDA_R_16F, CUDA_R_16F, CUDA_R_32F, CUDA_R_32F
+auto constexpr cudaDataTypeI = CUDA_R_16F;
 typedef half dataTypeI;
-auto constexpr cudaTypeO = CUDA_R_16F;
+auto constexpr cudaDataTypeO = CUDA_R_16F;
 typedef half dataTypeO;
-auto constexpr cudaTypeS = CUDA_R_32F;
+auto constexpr cudaDataTypeS = CUDA_R_32F;
 typedef float dataTypeS;
-auto constexpr cudaTypeCom = CUDA_R_32F;
+auto constexpr cudaDataTypeC = CUDA_R_32F;
+auto constexpr cudaComputeType = CUBLAS_COMPUTE_32F;
 
-#elif SCENARIO == 2 // CUDA_R_16F, CUDA_R_16F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F
-auto constexpr cudaTypeI = CUDA_R_16F;
+#elif SCENARIO == 2  // CUDA_R_16F, CUDA_R_16F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F
+auto constexpr cudaDataTypeI = CUDA_R_16F;
 typedef half dataTypeI;
-auto constexpr cudaTypeO = CUDA_R_32F;
+auto constexpr cudaDataTypeO = CUDA_R_32F;
 typedef float dataTypeO;
-auto constexpr cudaTypeS = CUDA_R_32F;
+auto constexpr cudaDataTypeS = CUDA_R_32F;
 typedef float dataTypeS;
-auto constexpr cudaTypeCom = CUDA_R_32F;
+auto constexpr cudaDataTypeC = CUDA_R_32F;
+auto constexpr cudaComputeType = CUBLAS_COMPUTE_32F;
 
-#elif SCENARIO == 3 // CUDA_R_32F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F
-auto constexpr cudaTypeI = CUDA_R_32F;
+#elif SCENARIO == 3  // CUDA_R_32F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F
+auto constexpr cudaDataTypeI = CUDA_R_32F;
 typedef float dataTypeI;
-auto constexpr cudaTypeO = CUDA_R_32F;
+auto constexpr cudaDataTypeO = CUDA_R_32F;
 typedef float dataTypeO;
-auto constexpr cudaTypeS = CUDA_R_32F;
+auto constexpr cudaDataTypeS = CUDA_R_32F;
 typedef float dataTypeS;
-auto constexpr cudaTypeCom = CUDA_R_32F;
+auto constexpr cudaDataTypeC = CUDA_R_32F;
+auto constexpr cudaComputeType = CUBLAS_COMPUTE_32F;
 
-#elif SCENARIO == 4 // CUDA_C_32F, CUDA_C_32F, CUDA_C_32F, CUDA_C_32F, CUDA_C_32F
-auto constexpr cudaTypeI = CUDA_C_32F;
+#elif SCENARIO == 4  // CUDA_C_32F, CUDA_C_32F, CUDA_C_32F, CUDA_C_32F, CUDA_C_32F
+auto constexpr cudaDataTypeI = CUDA_C_32F;
 typedef thrust::complex<float> dataTypeI;
-auto constexpr cudaTypeO = CUDA_C_32F;
+auto constexpr cudaDataTypeO = CUDA_C_32F;
 typedef thrust::complex<float> dataTypeO;
-auto constexpr cudaTypeS = CUDA_C_32F;
+auto constexpr cudaDataTypeS = CUDA_C_32F;
 typedef thrust::complex<float> dataTypeS;
-auto constexpr cudaTypeCom = CUDA_C_32F;
+auto constexpr cudaDataTypeC = CUDA_C_32F;
+auto constexpr cudaComputeType = CUBLAS_COMPUTE_32F;
 
 #endif
 
@@ -137,7 +166,7 @@ typedef struct {
     cublasLtMatmulAlgo_t      algo;
     cublasStatus_t            status;
     float                     time;
-    size_t                    workspaceSize; // actual memory workspace needed
+    size_t                    workspaceSize;  // actual memory workspace needed
     cublasMath_t              mathMode;
     cublasLtReductionScheme_t reductionScheme;
     int                       customOption;
@@ -170,11 +199,11 @@ static void printPerfStructure( const customMatmulPerf_t &perf, int const &m, in
         matmulAlgo, CUBLASLT_ALGO_CAP_MATHMODE_IMPL, &mathMode, sizeof( mathMode ), nullptr );
 
     /* Calculate GFLOPS */
-    double timeAvg = ( perf.time * 1e-3 ) / kernelRepeats; // Convert to seconds, then divide by loops
+    double timeAvg = ( perf.time * 1e-3 ) / kernelRepeats;  // Convert to seconds, then divide by loops
 #if SCENARIO < 4
-    double gflop = ( 2 * static_cast<unsigned long long int>( m * n ) * k ) * 1e-9; // Real
+    double gflop = ( 2 * static_cast<unsigned long long int>( m * n ) * k ) * 1e-9;  // Real
 #else
-    double gflop = ( 8 * static_cast<unsigned long long int>( m * n ) * k ) * 1e-9; // Complex
+    double gflop = ( 8 * static_cast<unsigned long long int>( m * n ) * k ) * 1e-9;  // Complex
 #endif
 
     printf(
@@ -229,13 +258,13 @@ __global__ void __launch_bounds__( threadsPerBlock )
     for ( int tid = blockIdx.x * blockDim.x + threadIdx.x; tid < n; tid += blockDim.x * gridDim.x ) {
         int const diagIdx = m + 1;
 #if SCENARIO < 4
-        if ( tid % ( diagIdx ) == 0 ) { // If thread index is on the diagonal
+        if ( tid % ( diagIdx ) == 0 ) {  // If thread index is on the diagonal
             if ( fabsf( __half2float( d_C[tid] ) - 1.0f ) > 1e-7f )
                 *d_p = false;
         } else if ( __half2float( d_C[tid] ) > 1e-7f )
             *d_p = false;
 #else
-        if ( tid % ( diagIdx ) == 0 ) { // If thread index is on the diagonal
+        if ( tid % ( diagIdx ) == 0 ) {  // If thread index is on the diagonal
             if ( fabsf( d_C[tid].real( ) - 1.0f ) > 1e-7f )
                 *d_p = false;
         } else if ( d_C[tid].real( ) > 1e-7f )
@@ -244,18 +273,18 @@ __global__ void __launch_bounds__( threadsPerBlock )
     }
 };
 
-static cublasStatus_t customMatmulRun( cublasLtHandle_t            ltHandle, // to get the capabilities (required a GPU)
-                                       cublasLtMatmulDesc_t        operationDesc,
-                                       void const *                alpha, /* host or device pointer */
-                                       void const *                A,
-                                       cublasLtMatrixLayout_t      Adesc,
-                                       void const *                B,
-                                       cublasLtMatrixLayout_t      Bdesc,
-                                       void const *                beta, /* host or device pointer */
-                                       void const *                C,
-                                       cublasLtMatrixLayout_t      Cdesc,
-                                       void *                      D,
-                                       cublasLtMatrixLayout_t      Ddesc,
+static cublasStatus_t customMatmulRun( cublasLtHandle_t       ltHandle,  // to get the capabilities (required a GPU)
+                                       cublasLtMatmulDesc_t   operationDesc,
+                                       void const *           alpha, /* host or device pointer */
+                                       void const *           A,
+                                       cublasLtMatrixLayout_t Adesc,
+                                       void const *           B,
+                                       cublasLtMatrixLayout_t Bdesc,
+                                       void const *           beta, /* host or device pointer */
+                                       void const *           C,
+                                       cublasLtMatrixLayout_t Cdesc,
+                                       void *                 D,
+                                       cublasLtMatrixLayout_t Ddesc,
                                        cublasLtMatmulAlgo_t const &algo,
                                        void *                      workSpace,
                                        size_t                      workSpaceSizeInBytes,
@@ -307,12 +336,12 @@ static cublasStatus_t customMatmulRun( cublasLtHandle_t            ltHandle, // 
             // For the moment only add successful findings
             if ( algoStatus == CUBLAS_STATUS_SUCCESS ) {
                 perfResults.algo          = algo;
-                perfResults.time          = time / kernelRepeats; // Average time
+                perfResults.time          = time / kernelRepeats;  // Average time
                 perfResults.workspaceSize = heurResult.workspaceSize;
                 perfResults.wavesCount    = heurResult.wavesCount;
             }
         } else {
-            algoStatus = CUBLAS_STATUS_NOT_SUPPORTED; // Not enough workspace
+            algoStatus = CUBLAS_STATUS_NOT_SUPPORTED;  // Not enough workspace
         }
     }
     return algoStatus;
@@ -355,36 +384,39 @@ void LtGemmSearch( cublasLtHandle_t  ltHandle,
     int                algoIdA[algoIds];
     customMatmulPerf_t perfResults[algoCombinations];
 
-    cudaDataType_t computeType = cudaTypeCom, scaleType = cudaTypeS, Atype = cudaTypeI, Btype = cudaTypeI,
-                   Ctype = cudaTypeO;
+    cudaDataType_t computeType = cudaDataTypeC;
+    cudaDataType_t scaleType = cudaDataTypeS;
+    cudaDataType_t Atype = cudaDataTypeI;
+    cudaDataType_t Btype = cudaDataTypeI;
+    cudaDataType_t Ctype = cudaDataTypeO;
 
-    checkCudaErrors( cublasLtMatmulPreferenceCreate( &preference ) );
-    checkCudaErrors( cublasLtMatmulPreferenceSetAttribute(
+    CUDA_RT_CALL( cublasLtMatmulPreferenceCreate( &preference ) );
+    CUDA_RT_CALL( cublasLtMatmulPreferenceSetAttribute(
         preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &workSpaceSize, sizeof( workSpaceSize ) ) );
 
     // Create operation descriptor; see cublasLtMatmulDescAttributes_t for details about defaults; here we just need to
     // set the transforms for A and B
-    checkCudaErrors( cublasLtMatmulDescCreate( &operationDesc, computeType ) );
-    checkCudaErrors(
+    CUDA_RT_CALL( cublasLtMatmulDescCreate( &operationDesc, cudaComputeType, computeType ) );
+    CUDA_RT_CALL(
         cublasLtMatmulDescSetAttribute( operationDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof( transa ) ) );
-    checkCudaErrors(
+    CUDA_RT_CALL(
         cublasLtMatmulDescSetAttribute( operationDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof( transa ) ) );
 
     // Create matrix descriptors. We are good with the details here so no need to set any extra attributes
-    checkCudaErrors( cublasLtMatrixLayoutCreate(
+    CUDA_RT_CALL( cublasLtMatrixLayoutCreate(
         &Adesc, Atype, transa == CUBLAS_OP_N ? m : k, transa == CUBLAS_OP_N ? k : m, lda ) );
-    checkCudaErrors( cublasLtMatrixLayoutCreate(
+    CUDA_RT_CALL( cublasLtMatrixLayoutCreate(
         &Bdesc, Btype, transb == CUBLAS_OP_N ? k : n, transb == CUBLAS_OP_N ? n : k, ldb ) );
-    checkCudaErrors( cublasLtMatrixLayoutCreate( &Cdesc, Ctype, m, n, ldc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutCreate( &Cdesc, Ctype, m, n, ldc ) );
 
     // Request the 4 first AlgoId available for SGEMM ( computeType = scaleType = Atype = Btype = Ctype = Dtype =
     // CUDA_R_32F)
-    checkCudaErrors( cublasLtMatmulAlgoGetIds(
-        ltHandle, computeType, scaleType, Atype, Btype, Ctype, Ctype, algoIds, algoIdA, &nbAlgoIds ) );
+    CUDA_RT_CALL( cublasLtMatmulAlgoGetIds(
+        ltHandle, cudaComputeType, scaleType, Atype, Btype, Ctype, Ctype, algoIds, algoIdA, &nbAlgoIds ) );
 
     // Create CUDA event to time the execution time of each algo
-    checkCudaErrors( cudaEventCreate( &startEvent, cudaEventBlockingSync ) );
-    checkCudaErrors( cudaEventCreate( &stopEvent, cudaEventBlockingSync ) );
+    CUDA_RT_CALL( cudaEventCreate( &startEvent, cudaEventBlockingSync ) );
+    CUDA_RT_CALL( cudaEventCreate( &stopEvent, cudaEventBlockingSync ) );
 
     // Loop over the Algo IDs
     for ( int idx = 0; ( idx < nbAlgoIds ) && ( algoCount < algoCombinations ); idx++ ) {
@@ -392,12 +424,12 @@ void LtGemmSearch( cublasLtHandle_t  ltHandle,
         size_t               sizeWritten = 0;
         /* Initialize algo structure with given Algp ID */
         status =
-            cublasLtMatmulAlgoInit( ltHandle, computeType, scaleType, Atype, Btype, Ctype, Ctype, algoIdA[idx], &algo );
+            cublasLtMatmulAlgoInit( ltHandle, cudaComputeType, scaleType, Atype, Btype, Ctype, Ctype, algoIdA[idx], &algo );
         if ( status != CUBLAS_STATUS_SUCCESS ) {
             continue;
         }
         // Query the tiles enums supported by that algo
-        checkCudaErrors(
+        CUDA_RT_CALL(
             cublasLtMatmulAlgoCapGetAttribute( &algo, CUBLASLT_ALGO_CAP_TILE_IDS, nullptr, 0, &sizeWritten ) );
         int  nbTiles = int( sizeWritten / sizeof( int ) );
         int *tileA   = new int[nbTiles == 0 ? 1 : nbTiles];
@@ -408,22 +440,22 @@ void LtGemmSearch( cublasLtHandle_t  ltHandle,
 
         int splitkSupport, redMask, swizzlingMax, customOptionMax;
         // Retrieve Algo Capabilities attributes to be able to setup loop over the different combinations
-        checkCudaErrors( cublasLtMatmulAlgoCapGetAttribute(
+        CUDA_RT_CALL( cublasLtMatmulAlgoCapGetAttribute(
             &algo, CUBLASLT_ALGO_CAP_TILE_IDS, tileA, sizeof( int ) * nbTiles, &sizeWritten ) );
-        checkCudaErrors( cublasLtMatmulAlgoCapGetAttribute(
+        CUDA_RT_CALL( cublasLtMatmulAlgoCapGetAttribute(
             &algo, CUBLASLT_ALGO_CAP_SPLITK_SUPPORT, &splitkSupport, sizeof( splitkSupport ), &sizeWritten ) );
-        checkCudaErrors( cublasLtMatmulAlgoCapGetAttribute(
+        CUDA_RT_CALL( cublasLtMatmulAlgoCapGetAttribute(
             &algo, CUBLASLT_ALGO_CAP_REDUCTION_SCHEME_MASK, &redMask, sizeof( redMask ), &sizeWritten ) );
-        checkCudaErrors( cublasLtMatmulAlgoCapGetAttribute(
+        CUDA_RT_CALL( cublasLtMatmulAlgoCapGetAttribute(
             &algo, CUBLASLT_ALGO_CAP_CTA_SWIZZLING_SUPPORT, &swizzlingMax, sizeof( swizzlingMax ), &sizeWritten ) );
-        checkCudaErrors( cublasLtMatmulAlgoCapGetAttribute(
+        CUDA_RT_CALL( cublasLtMatmulAlgoCapGetAttribute(
             &algo, CUBLASLT_ALGO_CAP_CUSTOM_OPTION_MAX, &customOptionMax, sizeof( customOptionMax ), &sizeWritten ) );
 
         /* Loop over the different tiles */
         for ( int tileIdx = 0; tileIdx < nbTiles; tileIdx++ ) {
             /* Loop over the different custom option if any */
             for ( int customOption = 0; customOption <= customOptionMax; customOption++ ) {
-                checkCudaErrors( cublasLtMatmulAlgoConfigSetAttribute(
+                CUDA_RT_CALL( cublasLtMatmulAlgoConfigSetAttribute(
                     &algo, CUBLASLT_ALGO_CONFIG_CUSTOM_OPTION, &customOption, sizeof( customOption ) ) );
                 /* Loop over the CTAs swizzling support */
                 for ( int k = 0; k <= swizzlingMax; k++ ) {
@@ -435,29 +467,29 @@ void LtGemmSearch( cublasLtHandle_t  ltHandle,
                     // splitK is not enabled
                     for ( int l = 0; ( l < ( 1 + splitK_trial ) ) && ( algoCount < algoCombinations ); l++ ) {
                         /* Setup attribute of the algo to run */
-                        checkCudaErrors( cublasLtMatmulAlgoConfigSetAttribute(
+                        CUDA_RT_CALL( cublasLtMatmulAlgoConfigSetAttribute(
                             &algo, CUBLASLT_ALGO_CONFIG_TILE_ID, &tileA[tileIdx], sizeof( tileA[tileIdx] ) ) );
                         int splitK_val = 0;
                         int redScheme  = CUBLASLT_REDUCTION_SCHEME_NONE;
-                        checkCudaErrors( cublasLtMatmulAlgoConfigSetAttribute(
+                        CUDA_RT_CALL( cublasLtMatmulAlgoConfigSetAttribute(
                             &algo, CUBLASLT_ALGO_CONFIG_SPLITK_NUM, &splitK_val, sizeof( splitK_val ) ) );
-                        checkCudaErrors( cublasLtMatmulAlgoConfigSetAttribute(
+                        CUDA_RT_CALL( cublasLtMatmulAlgoConfigSetAttribute(
                             &algo, CUBLASLT_ALGO_CONFIG_CTA_SWIZZLING, &k, sizeof( k ) ) );
-                        checkCudaErrors( cublasLtMatmulAlgoConfigSetAttribute(
+                        CUDA_RT_CALL( cublasLtMatmulAlgoConfigSetAttribute(
                             &algo, CUBLASLT_ALGO_CONFIG_REDUCTION_SCHEME, &redScheme, sizeof( int ) ) );
 
-                        if ( l > 0 ) { // Split-K case
+                        if ( l > 0 ) {  // Split-K case
                             splitK_val = splitKSequenceA[l - 1];
-                            checkCudaErrors( cublasLtMatmulAlgoConfigSetAttribute( &algo,
-                                                                                   CUBLASLT_ALGO_CONFIG_SPLITK_NUM,
-                                                                                   &splitKSequenceA[l - 1],
-                                                                                   sizeof( splitKSequenceA[l - 1] ) ) );
+                            CUDA_RT_CALL( cublasLtMatmulAlgoConfigSetAttribute( &algo,
+                                                                                CUBLASLT_ALGO_CONFIG_SPLITK_NUM,
+                                                                                &splitKSequenceA[l - 1],
+                                                                                sizeof( splitKSequenceA[l - 1] ) ) );
                             /* Going over all the reduction scheme  */
                             for ( redScheme = 1; redScheme < static_cast<int>( CUBLASLT_REDUCTION_SCHEME_MASK ) &&
                                                  ( algoCount < algoCombinations );
                                   redScheme = redScheme << 1 ) {
                                 if ( redScheme & redMask ) {
-                                    checkCudaErrors(
+                                    CUDA_RT_CALL(
                                         cublasLtMatmulAlgoConfigSetAttribute( &algo,
                                                                               CUBLASLT_ALGO_CONFIG_REDUCTION_SCHEME,
                                                                               &redScheme,
@@ -486,9 +518,9 @@ void LtGemmSearch( cublasLtHandle_t  ltHandle,
                                     if ( status == CUBLAS_STATUS_SUCCESS ) {
                                         algoCount++;
                                     }
-                                } // end if
-                            }     // end for
-                        } else {  // Non-splitK case
+                                }  // end if
+                            }      // end for
+                        } else {   // Non-splitK case
                             /* if user preference is ok with workspace */
                             if ( algoCount < algoCombinations ) {
                                 status                        = customMatmulRun( ltHandle,
@@ -515,12 +547,12 @@ void LtGemmSearch( cublasLtHandle_t  ltHandle,
                                     algoCount++;
                             }
                         }
-                    } // end l
-                }     // end k
-            }         // end customOption
-        }             // end tileIdx
+                    }  // end l
+                }      // end k
+            }          // end customOption
+        }              // end tileIdx
         delete[] tileA;
-    } // end idx
+    }  // end idx
 
     // Sort the results per run duration
     std::sort( perfResults, perfResults + algoCount, time_compare );
@@ -529,13 +561,13 @@ void LtGemmSearch( cublasLtHandle_t  ltHandle,
         printPerfStructure( perfResults[i], m, n, k );
 
     // Descriptors are no longer needed as all GPU work was already enqueued
-    checkCudaErrors( cublasLtMatmulPreferenceDestroy( preference ) );
-    checkCudaErrors( cublasLtMatrixLayoutDestroy( Cdesc ) );
-    checkCudaErrors( cublasLtMatrixLayoutDestroy( Bdesc ) );
-    checkCudaErrors( cublasLtMatrixLayoutDestroy( Adesc ) );
-    checkCudaErrors( cublasLtMatmulDescDestroy( operationDesc ) );
-    checkCudaErrors( cudaEventDestroy( startEvent ) );
-    checkCudaErrors( cudaEventDestroy( stopEvent ) );
+    CUDA_RT_CALL( cublasLtMatmulPreferenceDestroy( preference ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutDestroy( Cdesc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutDestroy( Bdesc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutDestroy( Adesc ) );
+    CUDA_RT_CALL( cublasLtMatmulDescDestroy( operationDesc ) );
+    CUDA_RT_CALL( cudaEventDestroy( startEvent ) );
+    CUDA_RT_CALL( cudaEventDestroy( stopEvent ) );
 }
 
 void calculate( int const &m, int const &n, int const &k, int &count, int const &square ) {
@@ -553,10 +585,10 @@ void calculate( int const &m, int const &n, int const &k, int &count, int const 
     cublasLtHandle_t handle;
 
     /* Initialize cuBLASLt */
-    checkCudaErrors( cublasLtCreate( &handle ) );
+    CUDA_RT_CALL( cublasLtCreate( &handle ) );
 
     /* Allocate device memory for workspace */
-    checkCudaErrors( cudaMalloc( ( void ** )&d_workspace, workspace ) );
+    CUDA_RT_CALL( cudaMalloc( ( void ** )&d_workspace, workspace ) );
 
     /* Allocate device memory for the matrices */
     thrust::device_vector<dataTypeI> d_A( sizeA, 0.0f );
@@ -580,7 +612,7 @@ void calculate( int const &m, int const &n, int const &k, int &count, int const 
     thrust::transform( idx, idx + sizeB, d_B.begin( ), GenRand( ) );
 #endif
 
-    printf( "%d %d %d %d %d %d %d %d %d ", count, square, m, n, k, cudaTypeI, cudaTypeI, cudaTypeO, cudaTypeCom );
+    printf( "%d %d %d %d %d %d %d %d %d ", count, square, m, n, k, cudaDataTypeI, cudaDataTypeI, cudaDataTypeO, cudaDataTypeC );
     count++;
 
     LtGemmSearch( handle,
@@ -599,14 +631,14 @@ void calculate( int const &m, int const &n, int const &k, int &count, int const 
                   ldc,
                   d_workspace,
                   workspace );
-    checkCudaErrors( cudaDeviceSynchronize( ) );
+    CUDA_RT_CALL( cudaDeviceSynchronize( ) );
 
 #if IDENTITY
     /* Generate device vector to hold flag */
     thrust::device_vector<bool> d_p( 1, true );
 
     checkIdentity<<<sizeC / threadsPerBlock + 1, threadsPerBlock>>>( sizeC, m, d_C_ptr, d_p.data( ) );
-    checkCudaErrors( cudaDeviceSynchronize( ) );
+    CUDA_RT_CALL( cudaDeviceSynchronize( ) );
 
     /* Copy device flag to host */
     thrust::host_vector<bool> h_p = d_p;
@@ -658,18 +690,17 @@ void calculate( int const &m, int const &n, int const &k, int &count, int const 
 #endif
 
     /* Destroy workspace */
-    checkCudaErrors( cudaFree( d_workspace ) );
+    CUDA_RT_CALL( cudaFree( d_workspace ) );
 
     /* Shutdown */
-    checkCudaErrors( cublasLtDestroy( handle ) );
+    CUDA_RT_CALL( cublasLtDestroy( handle ) );
 }
 
 /* Main */
 int main( int argc, char **argv ) {
 
-    int dev = findCudaDevice( argc, ( const char ** )argv );
-    if ( dev == -1 )
-        throw std::runtime_error( "!!!! CUDA device not found" );
+    int dev {};
+    CUDA_RT_CALL( cudaGetDevice ( &dev ) );
 
     printf( "Run Type M N K A_Type B_Type C_Type Compute_Type Algo_ID Tile_Idx Tile_Size Split_K Reduce Swizzle Custom "
             "Status Time(ms) Workspace Math_Mode Waves GFLOPS\n" );
@@ -686,7 +717,7 @@ int main( int argc, char **argv ) {
 #endif
         calculate( m, m, m, count, square );
 
-    printf( "\n" ); // For better readability stdout
+    printf( "\n" );  // For better readability stdout
 
 #else
 
@@ -704,7 +735,7 @@ int main( int argc, char **argv ) {
             for ( int k = 8; k <= 128; k *= 2 )
                 calculate( m, n, k, count, square );
 
-    printf( "\n" ); // For better readability stdout
+    printf( "\n" );  // For better readability stdout
 
 #endif
 

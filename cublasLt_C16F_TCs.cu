@@ -71,11 +71,29 @@
 /* Includes, cuda */
 #include <cublasLt.h>
 #include <cuda_runtime.h>
-#include <helper_cuda.h>
 #include <thrust/complex.h>
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 #include <thrust/random.h>
+
+// *************** FOR ERROR CHECKING *******************
+#ifndef CUDA_RT_CALL
+#define CUDA_RT_CALL( call )                                                                                           \
+    {                                                                                                                  \
+        auto status = static_cast<cudaError_t>( call );                                                                \
+        if ( status != cudaSuccess )                                                                                   \
+            fprintf( stderr,                                                                                           \
+                     "ERROR: CUDA RT call \"%s\" in line %d of file %s failed "                                        \
+                     "with "                                                                                           \
+                     "%s (%d).\n",                                                                                     \
+                     #call,                                                                                            \
+                     __LINE__,                                                                                         \
+                     __FILE__,                                                                                         \
+                     cudaGetErrorString( status ),                                                                     \
+                     status );                                                                                         \
+    }
+#endif  // CUDA_RT_CALL
+// *************** FOR ERROR CHECKING *******************
 
 #define PRINT 0
 #define IDENTITY 0
@@ -85,21 +103,29 @@
 auto constexpr kernelRepeats   = 50;
 auto constexpr threadsPerBlock = 1024;
 
-#if SCENARIO == 0 // CUDA_C_16F, CUDA_C_16F, CUDA_C_16F, CUDA_C_32F, CUDA_C_32F
-auto constexpr cudaTypeI = CUDA_C_16F;
+// Key
+// *I = Input
+// *O = Output
+// *s = Scale
+// *C = Compute
+
+#if SCENARIO == 0  // CUDA_C_16F, CUDA_C_16F, CUDA_C_16F, CUDA_C_32F, CUDA_C_32F
+auto constexpr cudaDataTypeI = CUDA_C_16F;
 typedef half2 dataTypeI;
-auto constexpr cudaTypeO = CUDA_C_16F;
+auto constexpr cudaDataTypeO = CUDA_C_16F;
 typedef half2                  dataTypeO;
 typedef thrust::complex<float> dataTypeS;
-auto constexpr cudaTypeCom = CUDA_C_32F;
+auto constexpr cudaDataTypeC = CUDA_C_32F;
+auto constexpr cudaComputeType = CUBLAS_COMPUTE_32F;
 
-#elif SCENARIO == 1 // CUDA_C_16F, CUDA_C_16F, CUDA_C_32F, CUDA_C_32F, CUDA_C_32F
-auto constexpr cudaTypeI = CUDA_C_16F;
+#elif SCENARIO == 1  // CUDA_C_16F, CUDA_C_16F, CUDA_C_32F, CUDA_C_32F, CUDA_C_32F
+auto constexpr cudaDataTypeI = CUDA_C_16F;
 typedef half2 dataTypeI;
-auto constexpr cudaTypeO = CUDA_C_32F;
+auto constexpr cudaDataTypeO = CUDA_C_32F;
 typedef thrust::complex<float> dataTypeO;
 typedef thrust::complex<float> dataTypeS;
-auto constexpr cudaTypeCom = CUDA_C_32F;
+auto constexpr cudaDataTypeC = CUDA_C_32F;
+auto constexpr cudaComputeType = CUBLAS_COMPUTE_32F;
 #endif
 
 struct GenRand {
@@ -121,7 +147,7 @@ struct setIdentity {
         dataTypeI result;
         result.x          = __float2half( 0.0f );
         result.y          = __float2half( 0.0f );
-        int const diagIdx = ( m + 1 ); // Since we are using complex half.
+        int const diagIdx = ( m + 1 );  // Since we are using complex half.
         if ( idx % ( diagIdx ) == 0 )
             result.x = __float2half( 1.0f );
         return ( result );
@@ -134,13 +160,13 @@ __global__ void __launch_bounds__( threadsPerBlock )
     for ( int tid = blockIdx.x * blockDim.x + threadIdx.x; tid < n; tid += blockDim.x * gridDim.x ) {
         int const diagIdx = m + 1;
 #if SCENARIO == 0
-        if ( tid % ( diagIdx ) == 0 ) { // If thread index is on the diagonal
+        if ( tid % ( diagIdx ) == 0 ) {  // If thread index is on the diagonal
             if ( __hge( fabsf( d_C[tid].x - __float2half( 1.0f ) ), __float2half( 1e-7f ) ) )
-                *d_p = false; // abs( d_C - 1.0f ) > 1e-7
+                *d_p = false;  // abs( d_C - 1.0f ) > 1e-7
         } else if ( __hge( d_C[tid].x, __float2half( 1e-7f ) ) )
             *d_p = false;
 #elif SCENARIO == 1
-        if ( tid % ( diagIdx ) == 0 ) { // If thread index is on the diagonal
+        if ( tid % ( diagIdx ) == 0 ) {  // If thread index is on the diagonal
             if ( fabsf( d_C[tid].real( ) - 1.0f ) > 1e-7f )
                 *d_p = false;
         } else if ( d_C[tid].real( ) > 1e-7f )
@@ -185,53 +211,53 @@ void LtSgemm( cublasLtHandle_t  ltHandle,
     cublasLtMatrixLayout_t        AtransformDesc = nullptr, BtransformDesc = nullptr, CtransformDesc = nullptr;
 
     // Allocate memory for transformed matrix
-    checkCudaErrors( cudaMalloc( reinterpret_cast<void **>( &Atransform ), sizeA * sizeof( dataTypeI ) ) );
-    checkCudaErrors( cudaMalloc( reinterpret_cast<void **>( &Btransform ), sizeB * sizeof( dataTypeI ) ) );
-    checkCudaErrors( cudaMalloc( reinterpret_cast<void **>( &Ctransform ), sizeC * sizeof( dataTypeO ) ) );
+    CUDA_RT_CALL( cudaMalloc( reinterpret_cast<void **>( &Atransform ), sizeA * sizeof( dataTypeI ) ) );
+    CUDA_RT_CALL( cudaMalloc( reinterpret_cast<void **>( &Btransform ), sizeB * sizeof( dataTypeI ) ) );
+    CUDA_RT_CALL( cudaMalloc( reinterpret_cast<void **>( &Ctransform ), sizeC * sizeof( dataTypeO ) ) );
 
     // Create preference handle; In general, extra attributes can be
     // used here to disable tensor ops or to make sure algo selected
     // will work with badly aligned A, B, C. However, for simplicity
     // here we assume A,B,C are always well aligned (e.g., directly
     // come from cudaMalloc)
-    checkCudaErrors( cublasLtMatmulPreferenceCreate( &preference ) );
-    checkCudaErrors( cublasLtMatmulPreferenceSetAttribute(
+    CUDA_RT_CALL( cublasLtMatmulPreferenceCreate( &preference ) );
+    CUDA_RT_CALL( cublasLtMatmulPreferenceSetAttribute(
         preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &workSpaceSize, sizeof( workSpaceSize ) ) );
 
     // Create operation descriptor; see cublasLtMatmulDescAttributes_t
     // for details about defaults; here we just set the transforms for
     // A and B.
-    checkCudaErrors( cublasLtMatmulDescCreate( &operationDesc, cudaTypeCom ) );
-    checkCudaErrors(
+    CUDA_RT_CALL( cublasLtMatmulDescCreate( &operationDesc, cudaComputeType, cudaDataTypeC ) );
+    CUDA_RT_CALL(
         cublasLtMatmulDescSetAttribute( operationDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof( transa ) ) );
-    checkCudaErrors(
+    CUDA_RT_CALL(
         cublasLtMatmulDescSetAttribute( operationDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof( transa ) ) );
 
     // Create matrix descriptors for interleaved data. Not setting any extra attributes.
-    checkCudaErrors( cublasLtMatrixLayoutCreate(
-        &Adesc, cudaTypeI, transa == CUBLAS_OP_N ? m : k, transa == CUBLAS_OP_N ? k : m, lda ) );
-    checkCudaErrors( cublasLtMatrixLayoutCreate(
-        &Bdesc, cudaTypeI, transb == CUBLAS_OP_N ? k : n, transb == CUBLAS_OP_N ? n : k, ldb ) );
-    checkCudaErrors( cublasLtMatrixLayoutCreate( &Cdesc, cudaTypeO, m, n, ldc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutCreate(
+        &Adesc, cudaDataTypeI, transa == CUBLAS_OP_N ? m : k, transa == CUBLAS_OP_N ? k : m, lda ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutCreate(
+        &Bdesc, cudaDataTypeI, transb == CUBLAS_OP_N ? k : n, transb == CUBLAS_OP_N ? n : k, ldb ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutCreate( &Cdesc, cudaDataTypeO, m, n, ldc ) );
 
     // Create transform descriptor to convert interleaved to planar
-    checkCudaErrors( cublasLtMatrixTransformDescCreate( &transformDescI, cudaTypeCom ) );
-    checkCudaErrors( cublasLtMatrixTransformDescCreate( &transformDescO, cudaTypeCom ) );
+    CUDA_RT_CALL( cublasLtMatrixTransformDescCreate( &transformDescI, cudaDataTypeC ) );
+    CUDA_RT_CALL( cublasLtMatrixTransformDescCreate( &transformDescO, cudaDataTypeC ) );
 
     // Create matrix descriptors for planar data. Not setting any extra attributes.
     // Need to double check 3rd parameter
-    checkCudaErrors( cublasLtMatrixLayoutCreate(
-        &AtransformDesc, cudaTypeI, transa == CUBLAS_OP_N ? m : k, transa == CUBLAS_OP_N ? k : m, lda ) );
-    checkCudaErrors( cublasLtMatrixLayoutCreate(
-        &BtransformDesc, cudaTypeI, transb == CUBLAS_OP_N ? k : n, transb == CUBLAS_OP_N ? n : k, ldb ) );
-    checkCudaErrors( cublasLtMatrixLayoutCreate( &CtransformDesc, cudaTypeO, m, n, ldc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutCreate(
+        &AtransformDesc, cudaDataTypeI, transa == CUBLAS_OP_N ? m : k, transa == CUBLAS_OP_N ? k : m, lda ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutCreate(
+        &BtransformDesc, cudaDataTypeI, transb == CUBLAS_OP_N ? k : n, transb == CUBLAS_OP_N ? n : k, ldb ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutCreate( &CtransformDesc, cudaDataTypeO, m, n, ldc ) );
 
     // Configure inputs and outputs to as planar layout
-    checkCudaErrors( cublasLtMatrixLayoutSetAttribute(
+    CUDA_RT_CALL( cublasLtMatrixLayoutSetAttribute(
         AtransformDesc, CUBLASLT_MATRIX_LAYOUT_PLANE_OFFSET, &planarOffsetA, sizeof( planarOffsetA ) ) );
-    checkCudaErrors( cublasLtMatrixLayoutSetAttribute(
+    CUDA_RT_CALL( cublasLtMatrixLayoutSetAttribute(
         BtransformDesc, CUBLASLT_MATRIX_LAYOUT_PLANE_OFFSET, &planarOffsetB, sizeof( planarOffsetB ) ) );
-    checkCudaErrors( cublasLtMatrixLayoutSetAttribute(
+    CUDA_RT_CALL( cublasLtMatrixLayoutSetAttribute(
         CtransformDesc, CUBLASLT_MATRIX_LAYOUT_PLANE_OFFSET, &planarOffsetC, sizeof( planarOffsetC ) ) );
 
     // Create CUDA event to time the execution time of each algo
@@ -239,60 +265,60 @@ void LtSgemm( cublasLtHandle_t  ltHandle,
     cudaStream_t stream = nullptr;
 
 #if TIME_TRANSFORM == 0
-    checkCudaErrors( cublasLtMatrixTransform(
+    CUDA_RT_CALL( cublasLtMatrixTransform(
         ltHandle, transformDescI, alpha, A, Adesc, beta, nullptr, nullptr, Atransform, AtransformDesc, stream ) );
 
-    checkCudaErrors( cublasLtMatrixTransform(
+    CUDA_RT_CALL( cublasLtMatrixTransform(
         ltHandle, transformDescI, alpha, B, Bdesc, beta, nullptr, nullptr, Btransform, BtransformDesc, stream ) );
 #endif
 
-    checkCudaErrors( cudaEventCreate( &startEvent, cudaEventBlockingSync ) );
-    checkCudaErrors( cudaEventCreate( &stopEvent, cudaEventBlockingSync ) );
-    checkCudaErrors( cudaEventRecord( startEvent, stream ) );
+    CUDA_RT_CALL( cudaEventCreate( &startEvent, cudaEventBlockingSync ) );
+    CUDA_RT_CALL( cudaEventCreate( &stopEvent, cudaEventBlockingSync ) );
+    CUDA_RT_CALL( cudaEventRecord( startEvent, stream ) );
 
     for ( int loop = 0; loop < kernelRepeats; loop++ ) {
 
 #if TIME_TRANSFORM == 1
         // Transform interleaved data to planar
-        checkCudaErrors( cublasLtMatrixTransform(
+        CUDA_RT_CALL( cublasLtMatrixTransform(
             ltHandle, transformDescI, alpha, A, Adesc, beta, nullptr, nullptr, Atransform, AtransformDesc, stream ) );
 
-        checkCudaErrors( cublasLtMatrixTransform(
+        CUDA_RT_CALL( cublasLtMatrixTransform(
             ltHandle, transformDescI, alpha, B, Bdesc, beta, nullptr, nullptr, Btransform, BtransformDesc, stream ) );
 #endif
 
-        checkCudaErrors( cublasLtMatmul( ltHandle,
-                                         operationDesc,
-                                         alpha,
-                                         Atransform,
-                                         AtransformDesc,
-                                         Btransform,
-                                         BtransformDesc,
-                                         beta,
-                                         Ctransform,
-                                         CtransformDesc,
-                                         Ctransform,
-                                         CtransformDesc,
-                                         nullptr,
-                                         workSpace,
-                                         workSpaceSize,
-                                         stream ) );
+        CUDA_RT_CALL( cublasLtMatmul( ltHandle,
+                                      operationDesc,
+                                      alpha,
+                                      Atransform,
+                                      AtransformDesc,
+                                      Btransform,
+                                      BtransformDesc,
+                                      beta,
+                                      Ctransform,
+                                      CtransformDesc,
+                                      Ctransform,
+                                      CtransformDesc,
+                                      nullptr,
+                                      workSpace,
+                                      workSpaceSize,
+                                      stream ) );
 
 #if TIME_TRANSFORM == 1
         // Transform planar to interleaved data in output matrix
-        checkCudaErrors( cublasLtMatrixTransform(
+        CUDA_RT_CALL( cublasLtMatrixTransform(
             ltHandle, transformDescO, alpha, Ctransform, CtransformDesc, beta, nullptr, nullptr, C, Cdesc, stream ) );
 #endif
     }
 
-    checkCudaErrors( cudaEventRecord( stopEvent, stream ) );
-    checkCudaErrors( cudaEventSynchronize( stopEvent ) );
+    CUDA_RT_CALL( cudaEventRecord( stopEvent, stream ) );
+    CUDA_RT_CALL( cudaEventSynchronize( stopEvent ) );
     float time;
-    checkCudaErrors( cudaEventElapsedTime( &time, startEvent, stopEvent ) );
+    CUDA_RT_CALL( cudaEventElapsedTime( &time, startEvent, stopEvent ) );
 
 #if TIME_TRANSFORM == 0
     // Transform planar to interleaved data in output matrix
-    checkCudaErrors( cublasLtMatrixTransform(
+    CUDA_RT_CALL( cublasLtMatrixTransform(
         ltHandle, transformDescO, alpha, Ctransform, CtransformDesc, beta, nullptr, nullptr, C, Cdesc, stream ) );
 #endif
 
@@ -305,28 +331,28 @@ void LtSgemm( cublasLtHandle_t  ltHandle,
         m,
         n,
         k,
-        cudaTypeI,
-        cudaTypeI,
-        cudaTypeO,
-        cudaTypeCom,
+        cudaDataTypeI,
+        cudaDataTypeI,
+        cudaDataTypeO,
+        cudaDataTypeC,
         time / kernelRepeats );
 
     // Descriptors are no longer needed as all GPU work was already enqueued.
-    checkCudaErrors( cublasLtMatmulPreferenceDestroy( preference ) );
-    checkCudaErrors( cublasLtMatrixLayoutDestroy( Cdesc ) );
-    checkCudaErrors( cublasLtMatrixLayoutDestroy( Bdesc ) );
-    checkCudaErrors( cublasLtMatrixLayoutDestroy( Adesc ) );
-    checkCudaErrors( cublasLtMatmulDescDestroy( operationDesc ) );
-    checkCudaErrors( cudaFree( Atransform ) );
-    checkCudaErrors( cudaFree( Btransform ) );
-    checkCudaErrors( cudaFree( Ctransform ) );
-    checkCudaErrors( cublasLtMatrixLayoutDestroy( AtransformDesc ) );
-    checkCudaErrors( cublasLtMatrixLayoutDestroy( BtransformDesc ) );
-    checkCudaErrors( cublasLtMatrixLayoutDestroy( CtransformDesc ) );
-    checkCudaErrors( cublasLtMatrixTransformDescDestroy( transformDescI ) );
-    checkCudaErrors( cublasLtMatrixTransformDescDestroy( transformDescO ) );
-    checkCudaErrors( cudaEventDestroy( startEvent ) );
-    checkCudaErrors( cudaEventDestroy( stopEvent ) );
+    CUDA_RT_CALL( cublasLtMatmulPreferenceDestroy( preference ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutDestroy( Cdesc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutDestroy( Bdesc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutDestroy( Adesc ) );
+    CUDA_RT_CALL( cublasLtMatmulDescDestroy( operationDesc ) );
+    CUDA_RT_CALL( cudaFree( Atransform ) );
+    CUDA_RT_CALL( cudaFree( Btransform ) );
+    CUDA_RT_CALL( cudaFree( Ctransform ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutDestroy( AtransformDesc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutDestroy( BtransformDesc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutDestroy( CtransformDesc ) );
+    CUDA_RT_CALL( cublasLtMatrixTransformDescDestroy( transformDescI ) );
+    CUDA_RT_CALL( cublasLtMatrixTransformDescDestroy( transformDescO ) );
+    CUDA_RT_CALL( cudaEventDestroy( startEvent ) );
+    CUDA_RT_CALL( cudaEventDestroy( stopEvent ) );
 }
 
 void calculate( int const &m, int const &n, int const &k, int &count, int const &square ) {
@@ -344,10 +370,10 @@ void calculate( int const &m, int const &n, int const &k, int &count, int const 
     cublasLtHandle_t handle;
 
     /* Initialize cuBLASLt */
-    checkCudaErrors( cublasLtCreate( &handle ) );
+    CUDA_RT_CALL( cublasLtCreate( &handle ) );
 
     /* Allocate device memory for workspace */
-    checkCudaErrors( cudaMalloc( ( void ** )&d_workspace, workspace ) );
+    CUDA_RT_CALL( cudaMalloc( ( void ** )&d_workspace, workspace ) );
 
     /* Allocate device memory for the matrices */
     thrust::device_vector<dataTypeI> d_A( sizeA, __float2half2_rn( 0.0f ) );
@@ -422,7 +448,7 @@ void calculate( int const &m, int const &n, int const &k, int &count, int const 
     thrust::host_vector<dataTypeI> h_B = d_B;
     thrust::host_vector<dataTypeO> h_C = d_C;
 
-    printf( "\n" ); // Formatting stdout
+    printf( "\n" );  // Formatting stdout
 
     for ( int a = 0; a < k; a++ ) {
         for ( int b = 0; b < n; b++ )
@@ -457,22 +483,21 @@ void calculate( int const &m, int const &n, int const &k, int &count, int const 
 #endif
 
     /* Destroy workspace */
-    checkCudaErrors( cudaFree( d_workspace ) );
+    CUDA_RT_CALL( cudaFree( d_workspace ) );
 
     /* Shutdown */
-    checkCudaErrors( cublasLtDestroy( handle ) );
+    CUDA_RT_CALL( cublasLtDestroy( handle ) );
 }
 
 /* Main */
 int main( int argc, char **argv ) {
 
-    int dev = findCudaDevice( argc, ( const char ** )argv );
-    if ( dev == -1 )
-        throw std::runtime_error( "!!!! CUDA device not found" );
+    int dev {};
+    CUDA_RT_CALL( cudaGetDevice ( &dev ) );
 
     // Ensure GPU found is compute capability 7.0 or greater
     cudaDeviceProp deviceProp;
-    checkCudaErrors( cudaGetDeviceProperties( &deviceProp, dev ) );
+    CUDA_RT_CALL( cudaGetDeviceProperties( &deviceProp, dev ) );
 
     if ( deviceProp.major < 7 ) {
         throw std::runtime_error( "ERROR: This sample utilizes compute capability 7.0 or greater!" );
@@ -481,7 +506,7 @@ int main( int argc, char **argv ) {
     printf( "Computing matrix multiplication for the following types:\n" );
     printf( "Input Type (A):\t\t%s\n", "CUDA_C_16F" );
     printf( "Input Type (B):\t\t%s\n", "CUDA_C_16F" );
-    printf( "Output Type (C):\t%s\n", ( cudaTypeO == 6 ) ? "CUDA_C_16F" : "CUDA_C_32F" );
+    printf( "Output Type (C):\t%s\n", ( cudaDataTypeO == 6 ) ? "CUDA_C_16F" : "CUDA_C_32F" );
     printf( "Scale Type:\t\t%s\n", "CUDA_C_32F" );
     printf( "Compute Type:\t\t%s\n\n", "CUDA_C_32F" );
 
@@ -499,7 +524,7 @@ int main( int argc, char **argv ) {
 #endif
         calculate( m, m, m, count, square );
 
-    printf( "\n" ); // For better readability stdout
+    printf( "\n" );  // For better readability stdout
 
 #else
 
@@ -508,7 +533,7 @@ int main( int argc, char **argv ) {
         for ( int k = 1024; k <= 4096; k *= 2 )
             calculate( m, m, k, count, square );
 
-    printf( "\n" ); // For better readability stdout
+    printf( "\n" );  // For better readability stdout
 
     count  = 0;
     square = 0;
@@ -519,7 +544,7 @@ int main( int argc, char **argv ) {
             for ( int k = 8; k <= 128; k *= 2 )
                 calculate( m, n, k, count, square );
 
-    printf( "\n" ); // For better readability stdout
+    printf( "\n" );  // For better readability stdout
 
 #endif
 

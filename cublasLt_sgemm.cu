@@ -54,10 +54,27 @@
 
 /* Includes, cuda & thrust */
 #include <cublasLt.h>
-#include <cuda_runtime.h>
-#include <helper_cuda.h>
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
+
+// *************** FOR ERROR CHECKING *******************
+#ifndef CUDA_RT_CALL
+#define CUDA_RT_CALL( call )                                                                                           \
+    {                                                                                                                  \
+        auto status = static_cast<cudaError_t>( call );                                                                \
+        if ( status != cudaSuccess )                                                                                   \
+            fprintf( stderr,                                                                                           \
+                     "ERROR: CUDA RT call \"%s\" in line %d of file %s failed "                                        \
+                     "with "                                                                                           \
+                     "%s (%d).\n",                                                                                     \
+                     #call,                                                                                            \
+                     __LINE__,                                                                                         \
+                     __FILE__,                                                                                         \
+                     cudaGetErrorString( status ),                                                                     \
+                     status );                                                                                         \
+    }
+#endif  // CUDA_RT_CALL
+// *************** FOR ERROR CHECKING *******************
 
 #define ROW_MAJOR 1
 
@@ -124,25 +141,25 @@ void LtSgemm( cublasLtHandle_t  ltHandle,
     // Create operation descriptor; see cublasLtMatmulDescAttributes_t
     // for details about defaults; here we just set the transforms for
     // A and B.
-    checkCudaErrors( cublasLtMatmulDescCreate( &operationDesc, CUDA_R_32F ) );
-    checkCudaErrors(
+    CUDA_RT_CALL( cublasLtMatmulDescCreate( &operationDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F ) );
+    CUDA_RT_CALL(
         cublasLtMatmulDescSetAttribute( operationDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof( transa ) ) );
-    checkCudaErrors(
+    CUDA_RT_CALL(
         cublasLtMatmulDescSetAttribute( operationDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof( transa ) ) );
 
     // Create matrix descriptors. Not setting any extra attributes.
-    checkCudaErrors( cublasLtMatrixLayoutCreate(
+    CUDA_RT_CALL( cublasLtMatrixLayoutCreate(
         &Adesc, CUDA_R_32F, transa == CUBLAS_OP_N ? m : k, transa == CUBLAS_OP_N ? k : m, lda ) );
-    checkCudaErrors( cublasLtMatrixLayoutCreate(
+    CUDA_RT_CALL( cublasLtMatrixLayoutCreate(
         &Bdesc, CUDA_R_32F, transb == CUBLAS_OP_N ? k : n, transb == CUBLAS_OP_N ? n : k, ldb ) );
-    checkCudaErrors( cublasLtMatrixLayoutCreate( &Cdesc, CUDA_R_32F, m, n, ldc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutCreate( &Cdesc, CUDA_R_32F, m, n, ldc ) );
 
 #if ROW_MAJOR
-    checkCudaErrors(
+    CUDA_RT_CALL(
         cublasLtMatrixLayoutSetAttribute( Adesc, CUBLASLT_MATRIX_LAYOUT_ORDER, &rowOrder, sizeof( rowOrder ) ) );
-    checkCudaErrors(
+    CUDA_RT_CALL(
         cublasLtMatrixLayoutSetAttribute( Bdesc, CUBLASLT_MATRIX_LAYOUT_ORDER, &rowOrder, sizeof( rowOrder ) ) );
-    checkCudaErrors(
+    CUDA_RT_CALL(
         cublasLtMatrixLayoutSetAttribute( Cdesc, CUBLASLT_MATRIX_LAYOUT_ORDER, &rowOrder, sizeof( rowOrder ) ) );
 #endif
 
@@ -151,44 +168,44 @@ void LtSgemm( cublasLtHandle_t  ltHandle,
     // will work with badly aligned A, B, C. However, for simplicity
     // here we assume A,B,C are always well aligned (e.g., directly
     // come from cudaMalloc)
-    checkCudaErrors( cublasLtMatmulPreferenceCreate( &preference ) );
-    checkCudaErrors( cublasLtMatmulPreferenceSetAttribute(
+    CUDA_RT_CALL( cublasLtMatmulPreferenceCreate( &preference ) );
+    CUDA_RT_CALL( cublasLtMatmulPreferenceSetAttribute(
         preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &workspaceSize, sizeof( workspaceSize ) ) );
 
     // We just need the best available heuristic to try and run matmul.
     // There is no guarantee that this will work. For example, if A is
     // badly aligned, you can request more (e.g. 32) algos and try to
     // run them one by one until something works.
-    checkCudaErrors( cublasLtMatmulAlgoGetHeuristic(
+    CUDA_RT_CALL( cublasLtMatmulAlgoGetHeuristic(
         ltHandle, operationDesc, Adesc, Bdesc, Cdesc, Cdesc, preference, 1, &heuristicResult, &returnedResults ) );
 
     if ( returnedResults == 0 )
         throw std::runtime_error( "!!!! Unable to find any suitable algorithms" );
 
-    checkCudaErrors( cublasLtMatmul( ltHandle,
-                                     operationDesc,
-                                     alpha,
-                                     A,
-                                     Adesc,
-                                     B,
-                                     Bdesc,
-                                     beta,
-                                     C,
-                                     Cdesc,
-                                     C,
-                                     Cdesc,
-                                     &heuristicResult.algo,
-                                     workspace,
-                                     workspaceSize,
-                                     0 ) );
+    CUDA_RT_CALL( cublasLtMatmul( ltHandle,
+                                  operationDesc,
+                                  alpha,
+                                  A,
+                                  Adesc,
+                                  B,
+                                  Bdesc,
+                                  beta,
+                                  C,
+                                  Cdesc,
+                                  C,
+                                  Cdesc,
+                                  &heuristicResult.algo,
+                                  workspace,
+                                  workspaceSize,
+                                  0 ) );
 
     // Descriptors are no longer needed as all GPU work was already
     // enqueued.
-    checkCudaErrors( cublasLtMatmulPreferenceDestroy( preference ) );
-    checkCudaErrors( cublasLtMatrixLayoutDestroy( Cdesc ) );
-    checkCudaErrors( cublasLtMatrixLayoutDestroy( Bdesc ) );
-    checkCudaErrors( cublasLtMatrixLayoutDestroy( Adesc ) );
-    checkCudaErrors( cublasLtMatmulDescDestroy( operationDesc ) );
+    CUDA_RT_CALL( cublasLtMatmulPreferenceDestroy( preference ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutDestroy( Cdesc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutDestroy( Bdesc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutDestroy( Adesc ) );
+    CUDA_RT_CALL( cublasLtMatmulDescDestroy( operationDesc ) );
 }
 
 void calculate( int const &m, int const &n, int const &k ) {
@@ -209,10 +226,10 @@ void calculate( int const &m, int const &n, int const &k ) {
     cublasLtHandle_t handle;
 
     /* Initialize cuBLASLt */
-    checkCudaErrors( cublasLtCreate( &handle ) );
+    CUDA_RT_CALL( cublasLtCreate( &handle ) );
 
     /* Allocate device memory for workspace */
-    checkCudaErrors( cudaMalloc( ( void ** )&d_workspace, workspaceSize ) );
+    CUDA_RT_CALL( cudaMalloc( ( void ** )&d_workspace, workspaceSize ) );
 
     /* Initialize CUBLAS */
     printf( "cublasLt %dx%dx%d test running..\n", m, n, k );
@@ -260,7 +277,7 @@ void calculate( int const &m, int const &n, int const &k ) {
              d_workspace,
              workspaceSize );
 
-    checkCudaErrors( cudaDeviceSynchronize( ) );
+    CUDA_RT_CALL( cudaDeviceSynchronize( ) );
 
     /* Allocate host memory for reading back the result from device memory */
     h_C = d_C;
@@ -279,7 +296,7 @@ void calculate( int const &m, int const &n, int const &k ) {
         throw std::runtime_error( "!!!! reference norm is 0\n" );
 
     /* Shutdown */
-    checkCudaErrors( cublasLtDestroy( handle ) );
+    CUDA_RT_CALL( cublasLtDestroy( handle ) );
 
     if ( error_norm / ref_norm < 1e-4f )
         printf( "cuBLASLt SGEMM test passed.\n" );
@@ -290,9 +307,8 @@ void calculate( int const &m, int const &n, int const &k ) {
 /* Main */
 int main( int argc, char **argv ) {
 
-    int dev = findCudaDevice( argc, ( const char ** )argv );
-    if ( dev == -1 )
-        throw std::runtime_error( "!!!! CUDA device not found" );
+    int dev {};
+    CUDA_RT_CALL( cudaGetDevice ( &dev ) );
 
     // Compute square matrices
     for ( int i = 16; i <= maxN; i *= 2 )

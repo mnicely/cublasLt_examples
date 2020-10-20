@@ -53,17 +53,36 @@
 /* Includes, cuda & thrust*/
 #include <cublasLt.h>
 #include <cuda_runtime.h>
-#include <helper_cuda.h>
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
+
+// *************** FOR ERROR CHECKING *******************
+#ifndef CUDA_RT_CALL
+#define CUDA_RT_CALL( call )                                                                                           \
+    {                                                                                                                  \
+        auto status = static_cast<cudaError_t>( call );                                                                \
+        if ( status != cudaSuccess )                                                                                   \
+            fprintf( stderr,                                                                                           \
+                     "ERROR: CUDA RT call \"%s\" in line %d of file %s failed "                                        \
+                     "with "                                                                                           \
+                     "%s (%d).\n",                                                                                     \
+                     #call,                                                                                            \
+                     __LINE__,                                                                                         \
+                     __FILE__,                                                                                         \
+                     cudaGetErrorString( status ),                                                                     \
+                     status );                                                                                         \
+    }
+#endif  // CUDA_RT_CALL
+// *************** FOR ERROR CHECKING *******************
 
 typedef int8_t  dataTypeI;
 typedef int32_t dataTypeO;
 typedef int32_t dataTypeS;
 
 auto constexpr maxN      = 1024;
-auto constexpr cudaTypeI = CUDA_R_8I;
-auto constexpr cudaTypeO = CUDA_R_32I;
+auto constexpr cudaDataTypeI = CUDA_R_8I;
+auto constexpr cudaDataTypeO = CUDA_R_32I;
+auto constexpr cudaComputeType = CUBLAS_COMPUTE_32F;
 
 int roundoff( int v, int d ) {
     return ( v + d - 1 ) / d * d;
@@ -101,116 +120,116 @@ void LtIgemmTensor( cublasLtHandle_t ltHandle,
     int const ldbtransform = 32 * roundoff( n, 8 );
     int const ldctransform = 32 * m;
 
-    checkCudaErrors( cudaMalloc( &Atransform, sizeof( dataTypeI ) * roundoff( k, 32 ) / 32 * ldatransform ) );
-    checkCudaErrors( cudaMalloc( &Btransform, sizeof( dataTypeI ) * roundoff( k, 32 ) / 32 * ldbtransform ) );
-    checkCudaErrors( cudaMalloc( &Ctransform, sizeof( dataTypeO ) * roundoff( n, 32 ) / 32 * ldctransform ) );
+    CUDA_RT_CALL( cudaMalloc( &Atransform, sizeof( dataTypeI ) * roundoff( k, 32 ) / 32 * ldatransform ) );
+    CUDA_RT_CALL( cudaMalloc( &Btransform, sizeof( dataTypeI ) * roundoff( k, 32 ) / 32 * ldbtransform ) );
+    CUDA_RT_CALL( cudaMalloc( &Ctransform, sizeof( dataTypeO ) * roundoff( n, 32 ) / 32 * ldctransform ) );
 
-    checkCudaErrors( cublasLtMatrixTransformDescCreate( &transformDesc, CUDA_R_32F ) );
-    checkCudaErrors( cublasLtMatmulDescCreate( &matmulDesc, cudaTypeO ) );
+    CUDA_RT_CALL( cublasLtMatrixTransformDescCreate( &transformDesc, CUDA_R_32F ) );
+    CUDA_RT_CALL( cublasLtMatmulDescCreate( &matmulDesc, cudaComputeType, cudaDataTypeO ) );
 
     // Tensor operations IGEMM kernels only support NT gemm
-    checkCudaErrors( cublasLtMatmulDescSetAttribute(
+    CUDA_RT_CALL( cublasLtMatmulDescSetAttribute(
         matmulDesc, CUBLASLT_MATMUL_DESC_TRANSB, &opTranspose, sizeof( opTranspose ) ) );
 
     // --------------------------------------
     // Create descriptors for the original matrices
-    checkCudaErrors( cublasLtMatrixLayoutCreate( &Adesc, cudaTypeI, m, k, lda ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutCreate( &Adesc, cudaDataTypeI, m, k, lda ) );
 
     // B matrix is non-transposed, but transposed matrix is needed -
     // describe matrix as row major.
-    checkCudaErrors( cublasLtMatrixLayoutCreate( &Bdesc, cudaTypeI, n, k, ldb ) );
-    checkCudaErrors(
+    CUDA_RT_CALL( cublasLtMatrixLayoutCreate( &Bdesc, cudaDataTypeI, n, k, ldb ) );
+    CUDA_RT_CALL(
         cublasLtMatrixLayoutSetAttribute( Bdesc, CUBLASLT_MATRIX_LAYOUT_ORDER, &rowOrder, sizeof( rowOrder ) ) );
 
-    checkCudaErrors( cublasLtMatrixLayoutCreate( &Cdesc, cudaTypeO, m, n, ldc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutCreate( &Cdesc, cudaDataTypeO, m, n, ldc ) );
 
     // -----------------------------------------------------------
     // Create descriptors for the transformed matrices
-    checkCudaErrors( cublasLtMatrixLayoutCreate( &AtransformDesc, cudaTypeI, m, k, ldatransform ) );
-    checkCudaErrors( cublasLtMatrixLayoutSetAttribute(
+    CUDA_RT_CALL( cublasLtMatrixLayoutCreate( &AtransformDesc, cudaDataTypeI, m, k, ldatransform ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutSetAttribute(
         AtransformDesc, CUBLASLT_MATRIX_LAYOUT_ORDER, &order_COL32, sizeof( order_COL32 ) ) );
 
-    checkCudaErrors( cublasLtMatrixLayoutCreate( &BtransformDesc, cudaTypeI, n, k, ldbtransform ) );
-    checkCudaErrors( cublasLtMatrixLayoutSetAttribute(
+    CUDA_RT_CALL( cublasLtMatrixLayoutCreate( &BtransformDesc, cudaDataTypeI, n, k, ldbtransform ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutSetAttribute(
         BtransformDesc, CUBLASLT_MATRIX_LAYOUT_ORDER, &order_COL4_4R2_8C, sizeof( order_COL4_4R2_8C ) ) );
 
-    checkCudaErrors( cublasLtMatrixLayoutCreate( &CtransformDesc, cudaTypeO, m, n, ldctransform ) );
-    checkCudaErrors( cublasLtMatrixLayoutSetAttribute(
+    CUDA_RT_CALL( cublasLtMatrixLayoutCreate( &CtransformDesc, cudaDataTypeO, m, n, ldctransform ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutSetAttribute(
         CtransformDesc, CUBLASLT_MATRIX_LAYOUT_ORDER, &order_COL32, sizeof( order_COL32 ) ) );
 
     // --------------------------------------------------------
     // Transforms and computation
-    checkCudaErrors( cublasLtMatrixTransform( ltHandle,
-                                              transformDesc,
-                                              &transformAlpha,
-                                              A,
-                                              Adesc,
-                                              &transformBeta,
-                                              nullptr,
-                                              nullptr,
-                                              Atransform,
-                                              AtransformDesc,
-                                              0 ) );
+    CUDA_RT_CALL( cublasLtMatrixTransform( ltHandle,
+                                           transformDesc,
+                                           &transformAlpha,
+                                           A,
+                                           Adesc,
+                                           &transformBeta,
+                                           nullptr,
+                                           nullptr,
+                                           Atransform,
+                                           AtransformDesc,
+                                           0 ) );
 
-    checkCudaErrors( cublasLtMatrixTransform( ltHandle,
-                                              transformDesc,
-                                              &transformAlpha,
-                                              B,
-                                              Bdesc,
-                                              &transformBeta,
-                                              nullptr,
-                                              nullptr,
-                                              Btransform,
-                                              BtransformDesc,
-                                              0 ) );
+    CUDA_RT_CALL( cublasLtMatrixTransform( ltHandle,
+                                           transformDesc,
+                                           &transformAlpha,
+                                           B,
+                                           Bdesc,
+                                           &transformBeta,
+                                           nullptr,
+                                           nullptr,
+                                           Btransform,
+                                           BtransformDesc,
+                                           0 ) );
 
     // No need to transform C matrix as beta is assumed to be 0
-    checkCudaErrors( cublasLtMatmul( ltHandle,
-                                     matmulDesc,
-                                     &alpha,
-                                     Atransform,
-                                     AtransformDesc,
-                                     Btransform,
-                                     BtransformDesc,
-                                     &beta,
-                                     Ctransform,
-                                     CtransformDesc,
-                                     Ctransform,
-                                     CtransformDesc,
-                                     nullptr,
-                                     nullptr,
-                                     0,
-                                     0 ) );
+    CUDA_RT_CALL( cublasLtMatmul( ltHandle,
+                                  matmulDesc,
+                                  &alpha,
+                                  Atransform,
+                                  AtransformDesc,
+                                  Btransform,
+                                  BtransformDesc,
+                                  &beta,
+                                  Ctransform,
+                                  CtransformDesc,
+                                  Ctransform,
+                                  CtransformDesc,
+                                  nullptr,
+                                  nullptr,
+                                  0,
+                                  0 ) );
 
     // Transform the outputs to COL order
-    checkCudaErrors( cublasLtMatrixTransform( ltHandle,
-                                              transformDesc,
-                                              &transformAlpha,
-                                              Ctransform,
-                                              CtransformDesc,
-                                              &transformBeta,
-                                              nullptr,
-                                              nullptr,
-                                              C,
-                                              Cdesc,
-                                              0 ) );
+    CUDA_RT_CALL( cublasLtMatrixTransform( ltHandle,
+                                           transformDesc,
+                                           &transformAlpha,
+                                           Ctransform,
+                                           CtransformDesc,
+                                           &transformBeta,
+                                           nullptr,
+                                           nullptr,
+                                           C,
+                                           Cdesc,
+                                           0 ) );
 
     // Descriptors are no longer needed as all GPU work was already
     // enqueued.
-    checkCudaErrors( cublasLtMatrixLayoutDestroy( CtransformDesc ) );
-    checkCudaErrors( cublasLtMatrixLayoutDestroy( BtransformDesc ) );
-    checkCudaErrors( cublasLtMatrixLayoutDestroy( AtransformDesc ) );
-    checkCudaErrors( cublasLtMatrixLayoutDestroy( Cdesc ) );
-    checkCudaErrors( cublasLtMatrixLayoutDestroy( Bdesc ) );
-    checkCudaErrors( cublasLtMatrixLayoutDestroy( Adesc ) );
-    checkCudaErrors( cublasLtMatmulDescDestroy( matmulDesc ) );
-    checkCudaErrors( cublasLtMatrixTransformDescDestroy( transformDesc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutDestroy( CtransformDesc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutDestroy( BtransformDesc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutDestroy( AtransformDesc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutDestroy( Cdesc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutDestroy( Bdesc ) );
+    CUDA_RT_CALL( cublasLtMatrixLayoutDestroy( Adesc ) );
+    CUDA_RT_CALL( cublasLtMatmulDescDestroy( matmulDesc ) );
+    CUDA_RT_CALL( cublasLtMatrixTransformDescDestroy( transformDesc ) );
 
     // Wait until device is done before freeing transformed buffers
-    checkCudaErrors( cudaDeviceSynchronize( ) );
-    checkCudaErrors( cudaFree( Ctransform ) );
-    checkCudaErrors( cudaFree( Btransform ) );
-    checkCudaErrors( cudaFree( Atransform ) );
+    CUDA_RT_CALL( cudaDeviceSynchronize( ) );
+    CUDA_RT_CALL( cudaFree( Ctransform ) );
+    CUDA_RT_CALL( cudaFree( Btransform ) );
+    CUDA_RT_CALL( cudaFree( Atransform ) );
 }
 
 /* Host implementation of a simple version of IGEMM */
@@ -253,7 +272,7 @@ void calculate( int const &m, int const &n, int const &k ) {
     cublasLtHandle_t handle;
 
     /* Initialize cuBLASLt */
-    checkCudaErrors( cublasLtCreate( &handle ) );
+    CUDA_RT_CALL( cublasLtCreate( &handle ) );
 
     printf( "cublasLt %dx%dx%d test running..\n", m, n, k );
 
@@ -305,7 +324,7 @@ void calculate( int const &m, int const &n, int const &k ) {
         throw std::runtime_error( "!!!! reference norm is 0\n" );
 
     /* Shutdown */
-    checkCudaErrors( cublasLtDestroy( handle ) );
+    CUDA_RT_CALL( cublasLtDestroy( handle ) );
 
     if ( error_norm / ref_norm < 1e-4f )
         printf( "cuBLASLt IGEMM test passed.\n" );
@@ -316,13 +335,12 @@ void calculate( int const &m, int const &n, int const &k ) {
 /* Main */
 int main( int argc, char **argv ) {
 
-    int dev = findCudaDevice( argc, ( const char ** )argv );
-    if ( dev == -1 )
-        throw std::runtime_error( "!!!! CUDA device not found" );
+    int dev {};
+    CUDA_RT_CALL( cudaGetDevice ( &dev ) );
 
     // Ensure GPU found is compute capability 7.2 or greater
     cudaDeviceProp deviceProp;
-    checkCudaErrors( cudaGetDeviceProperties( &deviceProp, dev ) );
+    CUDA_RT_CALL( cudaGetDeviceProperties( &deviceProp, dev ) );
 
     if ( deviceProp.major > 6 ) {
         if ( deviceProp.minor < 2 ) {
